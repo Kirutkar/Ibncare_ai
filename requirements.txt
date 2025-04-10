@@ -1,0 +1,16 @@
+streamlit
+requests
+speechrecognition
+pillow
+flask
+flask_cors
+python-dotenv
+fpdf
+mysql-connector-python
+opencv-python
+numpy
+pytesseract
+google-generativeai
+pdf2image
+langdetect
+googletrans==4.0.0-rc1
