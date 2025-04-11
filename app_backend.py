@@ -577,6 +577,9 @@ def upload_scan():
 
 
 
+@app.route("/", methods=["GET"])
+def index():
+    return "✅ IbnCare Flask backend is running!", 200
 
 
 
