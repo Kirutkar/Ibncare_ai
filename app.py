@@ -253,24 +253,36 @@ with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
     st.markdown(mic_note, unsafe_allow_html=True)
 
 
-    # --- Chat Buttons ---
-    btn_col1, btn_col2 = st.columns(2)
-    with btn_col1:
-        if st.button("Get Answer"):
-            if st.session_state["user_input"]:
-                try:
-                    response = requests.post(f"{BACKEND_URL}/chat", json={
+   # --- Chat Buttons ---
+  btn_col1, btn_col2 = st.columns(2)
+  with btn_col1:
+     if st.button("Get Answer"):
+         if st.session_state["user_input"]:
+             try:
+                response = requests.post(f"{BACKEND_URL}/chat", json={
                     "message": st.session_state["user_input"],
                     "user_name": st.session_state["user_name_chat"],
                     "gender": st.session_state["gender_chat"],
                     "age": st.session_state["age_chat"]
                 })
-                    if response.status_code == 200:
-                        st.session_state["chat_response"] = response.json().get("response", "No response received.")
-                    else:
-                        st.session_state["chat_response"] = f"❌ Error {response.status_code}: Backend issue. Please try again later."
-               except Exception as e:
-                   st.session_state["chat_response"] = f"❌ Exception: {str(e)}"
+
+                if response.status_code == 200:
+                    st.session_state["chat_response"] = response.json().get("response", "No response received.")
+                else:
+                    st.session_state["chat_response"] = f"❌ Error {response.status_code}: Backend issue. Please try again later."
+
+            except Exception as e:
+                st.session_state["chat_response"] = f"❌ Exception: {str(e)}"
+
+            if "chat_history" not in st.session_state:
+                st.session_state["chat_history"] = []
+            st.session_state["chat_history"].append({
+                "user": st.session_state["user_input"],
+                "ai": st.session_state["chat_response"]
+            })
+        else:
+            st.warning("Please enter a valid question.")
+
             
                 if "chat_history" not in st.session_state:
                     st.session_state["chat_history"] = []
