@@ -22,7 +22,8 @@ COPY . /app
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Expose Streamlit port
-EXPOSE 7860
+EXPOSE 10000
 
 # Start both backend and frontend
-CMD ["sh", "-c", "python app_backend.py & streamlit run app.py --server.port=7860 --server.enableCORS=false --server.enableXsrfProtection=false"]
+CMD ["sh", "-c", "python app_backend.py & streamlit run app.py --server.port=10000 --server.enableCORS=false --server.enableXsrfProtection=false"]
+
