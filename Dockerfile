@@ -19,11 +19,11 @@ WORKDIR /app
 COPY . /app
 
 # Install Python dependencies
+RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose Streamlit port
+# Expose the port that Render will inject (don’t hardcode)
 EXPOSE 10000
 
-# Start both backend and frontend
-CMD ["sh", "-c", "python app_backend.py & streamlit run app.py --server.port=10000 --server.enableCORS=false --server.enableXsrfProtection=false"]
-
+# Start the Flask app only — let it pick up the correct port from environment
+CMD ["python", "app_backend.py"]
