@@ -8,10 +8,8 @@ import random
 import string
 import os
 
-
 # --- 🌐 Backend URL ---
 BACKEND_URL = "https://ibncare-ai.onrender.com"
-
 
 # --- 🧠 Initialize Session State ---
 defaults = {
@@ -44,7 +42,6 @@ if "pdf_ready" not in st.session_state:
     st.session_state["pdf_ready"] = False
 if "show_scan_uploader" not in st.session_state:
     st.session_state["show_scan_uploader"] = False
-
 
 # --- 🖼️ Load and Resize Banner ---
 banner = Image.open("ibncare_banner.png")
@@ -84,12 +81,12 @@ st.markdown("""
            border-radius: 8px;
            font-family: 'Segoe UI', sans-serif ;
         }
-        
+
         div[data-testid="stExpander"] > summary::before {
            content: "";
            text-shadow: 0 0 0 #000; /* This creates slight boldness illusion */
         }
-        
+
         /* Input and text areas */
         input[type="text"], textarea {
             border: 1.5px solid #00796b !important;
@@ -113,7 +110,7 @@ st.markdown("""
             border: 1.5px solid #00796b !important;
             border-radius: 5px !important;
         }
-        
+
         /* 🔥 Add THIS new block below your last rule */
         div[data-testid="stExpander"] + div[data-testid="stExpander"] {
             margin-top: -10px !important;
@@ -163,10 +160,10 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-
-#---Chat Section--
+# ---Chat Section--
 with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
-    st.markdown("<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Let's get to know you:</h6>", unsafe_allow_html=True)
+    st.markdown("<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Let's get to know you:</h6>",
+                unsafe_allow_html=True)
 
     # --- Top Row: Name + Clear Icon ---
     col1, col2 = st.columns([5, 1])
@@ -208,7 +205,9 @@ with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
 
     # --- Chat Input ---
     st.markdown("<hr style='margin-top:10px;margin-bottom:5px;'>", unsafe_allow_html=True)
-    st.markdown("<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>Ask your health-related question 👇</h6>", unsafe_allow_html=True)
+    st.markdown(
+        "<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>Ask your health-related question 👇</h6>",
+        unsafe_allow_html=True)
 
     input_col1, input_col2, input_col3 = st.columns([5, 1, 1])
     with input_col1:
@@ -223,7 +222,8 @@ with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
     with input_col2:
         st.markdown("<div style='padding-top: 25px;'>", unsafe_allow_html=True)
         lang_options = {"E": "en-US", "ع": "ar-SA"}
-        selected_lang = st.selectbox("Select Language:", list(lang_options.keys()), index=0, label_visibility="collapsed")
+        selected_lang = st.selectbox("Select Language:", list(lang_options.keys()), index=0,
+                                     label_visibility="collapsed")
     with input_col3:
         st.markdown("<div style='padding-top: 25px;'>", unsafe_allow_html=True)
         mic_clicked = st.button("🎤", help="Voice input supported")
@@ -242,7 +242,9 @@ with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
                 except:
                     mic_feedback += "⚠️ Voice input failed."
 
-            st.markdown(f"<div style='background-color:#e7f3fe; padding:12px; border-radius:10px;'>{mic_feedback}</div>", unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='background-color:#e7f3fe; padding:12px; border-radius:10px;'>{mic_feedback}</div>",
+                unsafe_allow_html=True)
 
     # ✅ Voice note repositioned just below mic icon + reduced gap before buttons
     mic_note = """
@@ -252,38 +254,27 @@ with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
     """
     st.markdown(mic_note, unsafe_allow_html=True)
 
+    # --- Chat Buttons ---
+    btn_col1, btn_col2 = st.columns(2)
+    with btn_col1:
+        if st.button("Get Answer"):
+            if st.session_state["user_input"]:
+                try:
+                    response = requests.post(f"{BACKEND_URL}/chat", json={
+                        "message": st.session_state["user_input"],
+                        "user_name": st.session_state["user_name_chat"],
+                        "gender": st.session_state["gender_chat"],
+                        "age": st.session_state["age_chat"]
+                    })
 
-   # --- Chat Buttons ---
-  btn_col1, btn_col2 = st.columns(2)
-  with btn_col1:
-     if st.button("Get Answer"):
-         if st.session_state["user_input"]:
-             try:
-                response = requests.post(f"{BACKEND_URL}/chat", json={
-                    "message": st.session_state["user_input"],
-                    "user_name": st.session_state["user_name_chat"],
-                    "gender": st.session_state["gender_chat"],
-                    "age": st.session_state["age_chat"]
-                })
+                    if response.status_code == 200:
+                        st.session_state["chat_response"] = response.json().get("response", "No response received.")
+                    else:
+                        st.session_state["chat_response"] = f"❌ Error {response.status_code}: Backend issue. Please try again later."
 
-                if response.status_code == 200:
-                    st.session_state["chat_response"] = response.json().get("response", "No response received.")
-                else:
-                    st.session_state["chat_response"] = f"❌ Error {response.status_code}: Backend issue. Please try again later."
+                except Exception as e:
+                    st.session_state["chat_response"] = f"❌ Exception: {str(e)}"
 
-            except Exception as e:
-                st.session_state["chat_response"] = f"❌ Exception: {str(e)}"
-
-            if "chat_history" not in st.session_state:
-                st.session_state["chat_history"] = []
-            st.session_state["chat_history"].append({
-                "user": st.session_state["user_input"],
-                "ai": st.session_state["chat_response"]
-            })
-        else:
-            st.warning("Please enter a valid question.")
-
-            
                 if "chat_history" not in st.session_state:
                     st.session_state["chat_history"] = []
                 st.session_state["chat_history"].append({
@@ -292,6 +283,7 @@ with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
                 })
             else:
                 st.warning("Please enter a valid question.")
+
     with btn_col2:
         if st.button("🗑 Clear Chat History"):
             st.session_state["chat_response"] = ""
@@ -301,16 +293,18 @@ with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
             st.success("✅ Chat history cleared!")
             st.rerun()
 
-    # --- Display Chat History ---
-    if st.session_state.get("chat_history"):
-        for entry in st.session_state["chat_history"]:
-            st.markdown(f"**🤖 IbnCare AI:** {entry['ai']}")
-            st.markdown("---")
 
+    # --- Display Chat History ---
+if st.session_state.get("chat_history"):
+    for entry in st.session_state["chat_history"]:
+        st.markdown(f"**🤖 IbnCare AI:** {entry['ai']}")
+        st.markdown("---")
 
 # --- 📋 Log Day-to-Day Symptoms (Mobile-Friendly & Styled) ---
 with st.expander("**📝 Day-to-Day Symptoms**", expanded=False):
-    st.markdown("""<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Log temporary issues like cold, pain, etc.</h6>""", unsafe_allow_html=True)
+    st.markdown(
+        """<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Log temporary issues like cold, pain, etc.</h6>""",
+        unsafe_allow_html=True)
 
     sym_col1, sym_col2, sym_col3 = st.columns([1.5, 1, 1])
     with sym_col1:
@@ -390,7 +384,9 @@ with st.expander("**📝 Day-to-Day Symptoms**", expanded=False):
             st.rerun()
 
     st.markdown("<hr style='margin-top:25px;margin-bottom:15px;'>", unsafe_allow_html=True)
-    st.markdown("<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>📜 View Past Symptoms & Manual Analysis</h6>", unsafe_allow_html=True)
+    st.markdown(
+        "<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>📜 View Past Symptoms & Manual Analysis</h6>",
+        unsafe_allow_html=True)
 
     col5, col6 = st.columns([1, 1])
     with col5:
@@ -433,7 +429,9 @@ with st.expander("**📝 Day-to-Day Symptoms**", expanded=False):
 
 # --- 📋 Chronic Medical Conditions (Mobile-Friendly & Styled) ---
 with st.expander("**📋 Chronic Medical Conditions**", expanded=False):
-    st.markdown("""<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Add long-term conditions (e.g., diabetes, surgery)</h6>""", unsafe_allow_html=True)
+    st.markdown(
+        """<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Add long-term conditions (e.g., diabetes, surgery)</h6>""",
+        unsafe_allow_html=True)
 
     # Name, Gender, Age row
     med_col1, med_col2, med_col3 = st.columns([1.5, 1, 1])
@@ -470,7 +468,8 @@ with st.expander("**📋 Chronic Medical Conditions**", expanded=False):
     col7, col8 = st.columns([1, 1])
     with col7:
         if st.button("Submit Medical History"):
-            if st.session_state["medical_user_name"] and st.session_state["condition_type"] and st.session_state["gender_medical"] != "Select":
+            if st.session_state["medical_user_name"] and st.session_state["condition_type"] and st.session_state[
+                "gender_medical"] != "Select":
                 res = requests.post(f"{BACKEND_URL}/log_medical_history", json={
                     "medical_user_name": st.session_state["medical_user_name"],
                     "gender": st.session_state["gender_medical"],
@@ -487,22 +486,25 @@ with st.expander("**📋 Chronic Medical Conditions**", expanded=False):
 
     with col8:
         if st.button("🧹 Clear Medical Form"):
-            for key in ["medical_user_name", "gender_medical", "age_medical", "condition_type", "condition_description"]:
+            for key in ["medical_user_name", "gender_medical", "age_medical", "condition_type",
+                        "condition_description"]:
                 st.session_state[key] = defaults[key]
-            st.session_state["condition_type_key"] = f"condition_type_input_{random.randint(1000,9999)}"
-            st.session_state["condition_desc_key"] = f"condition_desc_input_{random.randint(1000,9999)}"
-            st.session_state["age_medical_key"] = f"age_medical_box_{random.randint(1000,9999)}"
+            st.session_state["condition_type_key"] = f"condition_type_input_{random.randint(1000, 9999)}"
+            st.session_state["condition_desc_key"] = f"condition_desc_input_{random.randint(1000, 9999)}"
+            st.session_state["age_medical_key"] = f"age_medical_box_{random.randint(1000, 9999)}"
             st.success("✅ Cleared medical form!")
             st.rerun()
 
     # View and Clear
     st.markdown("<hr style='margin-top:25px;margin-bottom:15px;'>", unsafe_allow_html=True)
-    st.markdown("<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>📖 View Medical History</h6>", unsafe_allow_html=True)
+    st.markdown("<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>📖 View Medical History</h6>",
+                unsafe_allow_html=True)
 
     col9, col10 = st.columns([1, 1])
     with col9:
         if st.button("📄 View Medical History"):
-            if st.session_state["medical_user_name"] and st.session_state["gender_medical"] != "Select" and st.session_state["age_medical"]:
+            if st.session_state["medical_user_name"] and st.session_state["gender_medical"] != "Select" and \
+                    st.session_state["age_medical"]:
                 res = requests.post(f"{BACKEND_URL}/get_medical_history", json={
                     "medical_user_name": st.session_state["medical_user_name"],
                     "gender": st.session_state["gender_medical"],
@@ -532,7 +534,6 @@ with st.expander("**📋 Chronic Medical Conditions**", expanded=False):
             st.write(f"📝 **Description:** {entry['condition_description']}")
             st.write(f"📅 **Date:** {entry['date']}")
             st.markdown("---")
-
 
 # --- 📤 Export PDF (Aligned, Mobile-friendly)
 pdf_row = st.columns([0.08, 0.92])
@@ -588,7 +589,8 @@ if export_pdf_clicked:
                         f.write(res.content)
                     st.success("✅ PDF exported successfully!")
                     with open(file_path, "rb") as pdf_file:
-                        st.download_button("📥 Download PDF", data=pdf_file.read(), file_name=file_path, mime="application/pdf")
+                        st.download_button("📥 Download PDF", data=pdf_file.read(), file_name=file_path,
+                                           mime="application/pdf")
                     os.remove(file_path)
                 else:
                     st.error("❌ PDF export failed.")
@@ -613,11 +615,13 @@ with scan_row[1]:
 
 # --- Uploader logic
 if st.session_state.get("show_scan_uploader", False):
-    uploaded_file = st.file_uploader("Choose scan image or PDF", type=["png", "jpg", "jpeg", "pdf"], key="scan_file_uploader")
+    uploaded_file = st.file_uploader("Choose scan image or PDF", type=["png", "jpg", "jpeg", "pdf"],
+                                     key="scan_file_uploader")
     if uploaded_file:
         with st.spinner("🧠 Analyzing scan report..."):
             try:
-                res = requests.post(f"{BACKEND_URL}/upload_scan", files={"file": (uploaded_file.name, uploaded_file, uploaded_file.type)})
+                res = requests.post(f"{BACKEND_URL}/upload_scan",
+                                    files={"file": (uploaded_file.name, uploaded_file, uploaded_file.type)})
                 if res.status_code == 200:
                     data = res.json()
                     st.success("✅ Scan uploaded and analyzed!")
