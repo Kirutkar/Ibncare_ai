@@ -21,4 +21,4 @@ EXPOSE 5000
 EXPOSE 7860
 
 # Run both backend (Flask) and frontend (Streamlit)
-CMD ["sh", "-c", "python app_backend.py & streamlit run app.py --server.port=7860 --server.enableCORS=false"]
+CMD ["sh", "-c", "python app.py & streamlit run streamlit_ui.py --server.port=7860 --server.enableCORS=false"]
