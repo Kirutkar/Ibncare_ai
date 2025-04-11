@@ -172,6 +172,7 @@ def chat():
         return jsonify({"response": new_user_disclaimer + final_response})
 
     except Exception as e:
+        print("❌ Chat Route Error:", str(e))  # NEW LINE (this will print on logs)
         return jsonify({"response": f"❌ AI Error: {str(e)}"})
 
 
