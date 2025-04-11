@@ -9,7 +9,7 @@ import string
 import os
 
 # --- 🌐 Backend URL ---
-BACKEND_URL = "http://localhost:5000"
+BACKEND_URL = "https://ibncare-ai.onrender.com"
 
 # --- 🧠 Initialize Session State ---
 defaults = {
