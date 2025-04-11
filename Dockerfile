@@ -1,17 +1,20 @@
 # Use an official Python runtime as a parent image
 FROM python:3.9-slim
 
-# Set the working directory in the container
+# ✅ Install required Linux packages (libGL for OpenCV)
+RUN apt-get update && apt-get install -y libgl1-mesa-glx
+
+# Set the working directory
 WORKDIR /app
 
-# Copy all project files into the container
+# Copy files
 COPY . /app
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port for Streamlit (frontend)
+# Expose Streamlit port
 EXPOSE 7860
 
-# Start Flask + Streamlit in one container
+# Run both backend and frontend (Flask + Streamlit)
 CMD ["sh", "-c", "python app_backend.py & streamlit run app.py --server.port=7860 --server.enableCORS=false"]
