@@ -1,594 +1,627 @@
-import os
-import google.generativeai as genai
-import mysql.connector
-import mysql.connector
-from dotenv import load_dotenv
-from fpdf import FPDF
-from flask import send_file
-import tempfile
-from flask import Flask, request, jsonify
-import pytesseract
+# --- 📦 Imports ---
+import streamlit as st
+import requests
+import speech_recognition as sr
+import random
 from PIL import Image
-import io
-import google.generativeai as genai
-from flask_cors import CORS
-import fitz
-from pdf2image import convert_from_path
+import random
+import string
+import os
 
-POPPLER_PATH = r'C:\poppler-21.02.0\Library\bin'
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# --- 🌐 Backend URL ---
+BACKEND_URL = "https://ibncare-ai.onrender.com"
 
-
-
-# --- Load environment variables ---
-load_dotenv()
-
-# Ensure API key is present
-api_key = os.getenv("GOOGLE_API_KEY")
-if not api_key:
-    raise ValueError("❌ Error: GOOGLE_API_KEY is missing. Please check your .env file.")
-
-genai.configure(api_key=api_key)
-
-# --- MySQL Database Configuration ---
-db_config = {
-    "host": os.getenv("MYSQL_HOST"),
-    "user": os.getenv("MYSQL_USER"),
-    "password": os.getenv("MYSQL_PASSWORD"),
-    "database": os.getenv("MYSQL_DATABASE")
+# --- 🧠 Initialize Session State ---
+defaults = {
+    "user_input": "",
+    "chat_response": "",
+    "user_name_chat": "",
+    "gender_chat": "Select",
+    "age_chat": 0,
+    "user_name_symptom": "",
+    "gender_symptom": "Select",
+    "age_symptom": 0,
+    "symptom_input": "",
+    "medical_user_name": "",
+    "gender_medical": "Select",
+    "age_medical": 0,
+    "condition_type": "",
+    "condition_description": "",
+    "medical_history_data": [],
+    "chat_history": [],
 }
+for key, val in defaults.items():
+    if key not in st.session_state:
+        st.session_state[key] = val
 
-app = Flask(__name__)
-CORS(app)  # Enable CORS
+if "symptom_input_key" not in st.session_state:
+    st.session_state["symptom_input_key"] = "symptom_input_box"
+if "age_symptom_key" not in st.session_state:
+    st.session_state["age_symptom_key"] = "age_symptom_box"
+if "pdf_ready" not in st.session_state:
+    st.session_state["pdf_ready"] = False
+if "show_scan_uploader" not in st.session_state:
+    st.session_state["show_scan_uploader"] = False
 
-# --- Global cache dictionary to store previous responses ---
-cache = {}
+# --- 🖼️ Load and Resize Banner ---
+banner = Image.open("ibncare_banner.png")
+resized_banner = banner.resize((1800, 600))  # Optimized for mobile view
 
-# --- Function to establish database connection ---
-def connect_db():
-    try:
-        conn = mysql.connector.connect(**db_config)
-        return conn
-    except mysql.connector.Error as err:
-        print(f"❌ Database Error: {err}")
-        return None
-from langdetect import detect
-from googletrans import Translator
+st.markdown("""
+    <style>
+        html, body, .main {
+            background-color: #cbe9e6;
+        }
 
-@app.route("/chat", methods=["POST"])
-def chat():
-    data = request.get_json()
+        section.main > div:first-child {
+            padding-top: 0rem !important;
+            margin-top: -4rem !important;
+        }
 
-    if not data or "message" not in data or "user_name" not in data or "gender" not in data or "age" not in data:
-        return jsonify({"error": "Please provide message, user_name, gender, and age."}), 400
+        .block-container {
+            padding-left: 2rem;
+            padding-right: 2rem;
+        }
 
-    user_message = data["message"]
-    user_name = data["user_name"].strip().lower()
-    gender = data["gender"].strip().lower()
-    age = int(data["age"])
+        /* Expander Outer Box */
+        div[data-testid="stExpander"] {
+            background-color: #d0f0dc !important;
+            border: 1px solid #a2d5c6 !important;
+            border-radius: 10px;
+            padding: 10px;
+        }
 
-    # --- Language Detection ---
-    translator = Translator()
-    is_arabic = detect(user_message) == "ar"
+        /* Expander Title Styling */
+        div[data-testid="stExpander"] > summary {
+           font-weight: 800 ;
+           font-size: 18px ;
+           color: #004d40 ;
+           background-color: #d0f0dc;
+           padding: 8px 12px;
+           border-radius: 8px;
+           font-family: 'Segoe UI', sans-serif ;
+        }
 
-    translated_input = user_message
-    if is_arabic:
-        try:
-            translated_input = translator.translate(user_message, src='ar', dest='en').text
-        except Exception as e:
-            return jsonify({"response": f"Translation error: {str(e)}"}), 500
+        div[data-testid="stExpander"] > summary::before {
+           content: "";
+           text-shadow: 0 0 0 #000; /* This creates slight boldness illusion */
+        }
 
-    user_msg_lower = translated_input.strip().lower()
+        /* Input and text areas */
+        input[type="text"], textarea {
+            border: 1.5px solid #00796b !important;
+            border-radius: 5px !important;
+            padding: 8px !important;
+            background-color: #ffffff;
+        }
 
-    # --- DB fetch ---
-    conn = connect_db()
-    if conn is None:
-        return jsonify({"error": "Database connection failed."}), 500
+        .stNumberInput input {
+            border: none !important;
+        }
 
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""SELECT symptom FROM symptoms 
-                          WHERE LOWER(TRIM(user_name)) = %s AND LOWER(TRIM(gender)) = %s AND age = %s 
-                          AND timestamp >= CURDATE() - INTERVAL 10 DAY ORDER BY timestamp DESC""",
-                       (user_name, gender, age))
-        symptom_rows = cursor.fetchall()
-        recent_symptoms = [row[0] for row in symptom_rows if row[0].strip().lower() != user_msg_lower]
+        .stNumberInput > div {
+            border: 1.5px solid #00796b !important;
+            border-radius: 5px !important;
+            padding: 4px;
+            background-color: #ffffff;
+        }
 
-        cursor.execute("""SELECT condition_type FROM medical_history 
-                          WHERE LOWER(TRIM(medical_user_name)) = %s AND LOWER(TRIM(gender)) = %s AND age = %s
-                          ORDER BY created_at DESC""",
-                       (user_name, gender, age))
-        med_rows = cursor.fetchall()
-        medical_conditions = [row[0] for row in med_rows]
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"Database error: {err}"}), 500
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
+        div[role="listbox"] {
+            border: 1.5px solid #00796b !important;
+            border-radius: 5px !important;
+        }
 
-    # --- Logic same as before ---
-    new_user_disclaimer = ""
-    if not recent_symptoms and not medical_conditions:
-        new_user_disclaimer = (
-            "🧾 *Note: No recent symptoms or medical history found for this user.*\n"
-            "📌 This advice is based only on your current message. For personalized care, try logging your symptoms or medical history.\n\n"
+        /* 🔥 Add THIS new block below your last rule */
+        div[data-testid="stExpander"] + div[data-testid="stExpander"] {
+            margin-top: -10px !important;
+        }
+
+    </style>
+""", unsafe_allow_html=True)
+
+# --- 🖼️ Display Centered Banner ---
+col1, col2, col3 = st.columns([0.2, 5.6, 0.2])
+with col2:
+    st.image(resized_banner)
+
+# --- 🌼 Daily Inspiration Bar ---
+affirmations = [
+    "🌟 You are strong, capable, and healing every day.",
+    "💪 Your health is your superpower — keep going!",
+    "💚 Every small step you take is a step toward wellness.",
+    "🌼 You are worthy of good health and happiness.",
+    "☀️ Trust your body. Trust your journey.",
+    "🧘‍♀️ Breathe in strength, breathe out stress.",
+    "💖 Healing is not linear, but you are progressing beautifully.",
+    "🌿 Your mind and body are working together in harmony.",
+    "🌱 A healthy you means a healthier planet.",
+    "🍀 Wellness grows when you nurture it—just like nature.",
+    "🌸 Breathe clean, live clean, and keep the Earth green.",
+    "💡 Choose kindness, to your body and to the Earth.",
+]
+selected_affirmation = random.choice(affirmations)
+
+st.markdown(f"""
+    <div style='
+        background-color: #d0f0dc;
+        padding: 12px 18px;
+        border-radius: 10px;
+        border: 1px solid #aad4bd;
+        margin-top: -10px;
+        margin-bottom: 5px;
+        font-size: 15px;
+        color: #1b4332;
+        font-weight: 500;
+        text-align: center;
+        width: 100%;
+        white-space: normal;
+    '>
+        🌼 <b>Daily Inspiration:</b> {selected_affirmation}
+    </div>
+""", unsafe_allow_html=True)
+
+# ---Chat Section--
+with st.expander("**💬 Chat with IbnCare AI** ", expanded=False):
+    st.markdown("<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Let's get to know you:</h6>",
+                unsafe_allow_html=True)
+
+    # --- Top Row: Name + Clear Icon ---
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        st.session_state["user_name_chat"] = st.text_input(
+            "👤 Enter your name:",
+            placeholder="e.g., Ayesha",
+            value=st.session_state["user_name_chat"]
+        )
+    with col2:
+        st.markdown("<div style='padding-top: 25px;'>", unsafe_allow_html=True)
+        if st.button("🧹", help="Clear Name, Gender, Age + Full Chat"):
+            st.session_state["user_name_chat"] = ""
+            st.session_state["gender_chat"] = "Select"
+            st.session_state["age_chat"] = 0
+            st.session_state["age_chat_key_suffix"] = ''.join(random.choices(string.ascii_letters, k=5))
+            st.session_state["user_input"] = ""
+            st.session_state["chat_response"] = ""
+            st.session_state["chat_history"] = []
+            st.success("✅ All Chat Data Cleared!")
+            st.rerun()
+
+    # --- Gender + Age ---
+    gender_col, age_col = st.columns(2)
+    gender_options = ["Select", "Male", "Female", "Other"]
+    with gender_col:
+        st.session_state["gender_chat"] = st.selectbox(
+            "Select Gender:",
+            gender_options,
+            index=gender_options.index(st.session_state["gender_chat"]),
+            key="gender_chat_box"
+        )
+    with age_col:
+        age_key = f"age_chat_box_{st.session_state.get('age_chat_key_suffix', '')}"
+        st.session_state["age_chat"] = st.number_input(
+            "Enter Age:", min_value=0, max_value=120,
+            value=st.session_state["age_chat"], step=1, key=age_key
         )
 
-    # Keyword checks
-    diet_keywords = ["diet", "meal plan", "recipes", "nutrition", "food", "healthy eating"]
-    meal_keywords = ["breakfast", "lunch", "dinner", "menu", "full-day", "full plan", "one day", "three meals"]
-    symptom_keywords = ["symptom", "pain", "discomfort", "ache", "stomach", "bloating", "headache", "vomit",
-                        "nausea", "gas", "cold", "fever", "urination", "itch", "infection", "skin", "rash"]
-    remedy_keywords = ["remedy", "cure", "medicine", "treatment", "soothe", "relieve", "manage"]
-    fear_keywords = ["scared", "anxious", "nervous", "fear", "panic", "heart attack"]
+    # --- Chat Input ---
+    st.markdown("<hr style='margin-top:10px;margin-bottom:5px;'>", unsafe_allow_html=True)
+    st.markdown(
+        "<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>Ask your health-related question 👇</h6>",
+        unsafe_allow_html=True)
 
-    is_diet_query = any(k in user_msg_lower for k in diet_keywords)
-    is_full_meal_request = any(k in user_msg_lower for k in meal_keywords)
-    is_symptom_or_pain = any(k in user_msg_lower for k in symptom_keywords)
-    is_remedy_related = any(k in user_msg_lower for k in remedy_keywords)
-    is_fear_or_emergency = any(k in user_msg_lower for k in fear_keywords)
-
-    is_health_related = is_diet_query or is_full_meal_request or is_symptom_or_pain or is_remedy_related or is_fear_or_emergency
-    if not is_health_related:
-        return jsonify({"response": "🙏 I'm here to support your health. Please ask something related to symptoms, remedies, or diet. 💚"})
-
-    # Prompt build
-    health_context = f"The user is a {age}-year-old {gender} named {user_name}. "
-    if medical_conditions:
-        health_context += f"They have medical history of: {', '.join(medical_conditions)}. "
-    if recent_symptoms:
-        health_context += f"In the last 10 days, they experienced symptoms like: {', '.join(recent_symptoms)}. "
-
-    if is_diet_query and is_full_meal_request:
-        prompt = (
-            f"You are a certified nutritionist. 🍎🥗\n\nCreate a 1-day meal plan for:\n"
-            f"- Age: {age}, Gender: {gender}\nMedical History: {', '.join(medical_conditions) or 'None'}\n"
-            f"Symptoms: {', '.join(recent_symptoms) or 'None'}\n\n"
-            f"**Breakfast:**\n**Lunch:**\n**Dinner:**\n"
+    input_col1, input_col2, input_col3 = st.columns([5, 1, 1])
+    with input_col1:
+        chat_input_key = st.session_state.get("chat_input_box_key", "chat_input_box")
+        st.session_state["user_input"] = st.text_input(
+            "Ask your question:",
+            placeholder="e.g., What is good relief for acidity?",
+            value=st.session_state.get("user_input", ""),
+            key=chat_input_key
         )
-    elif is_diet_query:
-        prompt = f"List 3–5 healthy foods for a {age}-year-old {gender} with conditions: {', '.join(medical_conditions)}."
-    elif is_symptom_or_pain or is_remedy_related:
-        prompt = f"{health_context}\nUser reported: {translated_input}\nSuggest causes + 2 home remedies in a kind tone."
-    elif is_fear_or_emergency:
-        prompt = f"{health_context}\nUser seems anxious: {translated_input}\nRespond gently and reassure them with 2 calming tips."
-    else:
-        prompt = f"{health_context}\nUser asked: {translated_input}\nReply simply and kindly."
 
-    # Gemini
-    try:
-        cache_key = f"{user_name}_{user_msg_lower}"
-        if cache_key in cache:
-            final_response = cache[cache_key]
-        else:
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            response = model.generate_content([prompt, translated_input])
-            final_response = response.candidates[0].content.parts[0].text.strip()
-            cache[cache_key] = final_response
+    with input_col2:
+        st.markdown("<div style='padding-top: 25px;'>", unsafe_allow_html=True)
+        lang_options = {"E": "en-US", "ع": "ar-SA"}
+        selected_lang = st.selectbox("Select Language:", list(lang_options.keys()), index=0,
+                                     label_visibility="collapsed")
+    with input_col3:
+        st.markdown("<div style='padding-top: 25px;'>", unsafe_allow_html=True)
+        mic_clicked = st.button("🎤", help="Voice input supported")
 
-        if is_arabic:
-            final_response = translator.translate(final_response, src='en', dest='ar').text
+    # --- Voice Input ---
+    with input_col1:
+        if mic_clicked:
+            recognizer = sr.Recognizer()
+            with sr.Microphone() as source:
+                mic_feedback = "<b>🎙 Listening...</b> Please speak clearly.<br>"
+                try:
+                    audio = recognizer.listen(source, timeout=10, phrase_time_limit=20)
+                    query = recognizer.recognize_google(audio, language=lang_options[selected_lang])
+                    st.session_state["user_input"] = query
+                    mic_feedback += "✅ Voice captured: <i>{}</i>".format(query)
+                except:
+                    mic_feedback += "⚠️ Voice input failed."
 
-        return jsonify({"response": new_user_disclaimer + final_response})
+            st.markdown(
+                f"<div style='background-color:#e7f3fe; padding:12px; border-radius:10px;'>{mic_feedback}</div>",
+                unsafe_allow_html=True)
 
-    except Exception as e:
-        print("❌ Chat Route Error:", str(e))  # NEW LINE (this will print on logs)
-        return jsonify({"response": f"❌ AI Error: {str(e)}"})
+    # ✅ Voice note repositioned just below mic icon + reduced gap before buttons
+    mic_note = """
+    <div style='font-size: 13px; color:#444; margin-top: -2px; margin-bottom: 1px;'>
+        🌐 Supports <b>Arabic & English</b> voice input.
+    </div>
+    """
+    st.markdown(mic_note, unsafe_allow_html=True)
 
-
-
-@app.route("/log_symptom", methods=["POST"])
-def log_symptom():
-    data = request.get_json()
-
-    if not data or "user_name" not in data or "symptom" not in data or "gender" not in data or "age" not in data:
-        return jsonify({"error": "Invalid input. Please provide user_name, symptom, gender, and age."}), 400
-
-    user_name = data["user_name"]
-    symptom = data["symptom"]
-    gender = data["gender"]
-    age = data["age"]
-
-    conn = connect_db()
-    if conn is None:
-        return jsonify({"error": "Database connection failed."}), 500
-
-    try:
-        cursor = conn.cursor()
-        cursor.execute("INSERT INTO symptoms (user_name, symptom, gender, age) VALUES (%s, %s, %s, %s)",
-                       (user_name, symptom, gender, age))
-        conn.commit()
-
-        # --- Analyze symptoms if we have 7 days of logs ---
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT symptom, gender, age 
-            FROM symptoms 
-            WHERE LOWER(TRIM(user_name)) = %s 
-              AND timestamp >= CURDATE() - INTERVAL 7 DAY
-            ORDER BY timestamp DESC
-        """, (user_name.lower(),))
-        rows = cursor.fetchall()
-
-        if len(rows) >= 7:
-            symptoms = [row["symptom"] for row in rows]
-            gender = rows[0].get("gender", "unknown")
-            age = rows[0].get("age", "unknown")
-
-            symptom_list = "\n".join([f"- {s}" for s in symptoms])
-            prompt = (
-                f"You are a medical assistant. A {gender.lower()} aged {age} has reported the following symptoms over the last 7 days:\n"
-                f"{symptom_list}\n\n"
-                "1. Analyze the seriousness based on symptom combination and age/gender.\n"
-                "2. If it's mild/common, provide a reassuring, friendly message.\n"
-                "3. If it’s serious or persistent, suggest consulting a doctor politely.\n"
-                "Keep it short and empathetic (max 4–6 lines)."
-            )
-
-            model = genai.GenerativeModel("gemini-2.0-flash")
-            response = model.generate_content([prompt, "Please analyze the symptoms."])
-            if response.candidates and response.candidates[0].content.parts:
-                analysis_message = response.candidates[0].content.parts[0].text.strip()
+    # --- Chat Buttons ---
+    btn_col1, btn_col2 = st.columns(2)
+    with btn_col1:
+        if st.button("Get Answer"):
+            if st.session_state["user_input"]:
+                response = requests.post(f"{BACKEND_URL}/chat", json={
+                    "message": st.session_state["user_input"],
+                    "user_name": st.session_state["user_name_chat"],
+                    "gender": st.session_state["gender_chat"],
+                    "age": st.session_state["age_chat"]
+                })
+                st.session_state["chat_response"] = response.json().get("response", "No response received.")
+                if "chat_history" not in st.session_state:
+                    st.session_state["chat_history"] = []
+                st.session_state["chat_history"].append({
+                    "user": st.session_state["user_input"],
+                    "ai": st.session_state["chat_response"]
+                })
             else:
-                analysis_message = "Sorry, I couldn't analyze your symptoms right now."
+                st.warning("Please enter a valid question.")
 
-            return jsonify({
-                "message": "Symptom logged successfully!",
-                "analysis": analysis_message
+    with btn_col2:
+        if st.button("🗑 Clear Chat History"):
+            st.session_state["chat_response"] = ""
+            st.session_state["chat_history"] = []
+            st.session_state["user_input"] = ""
+            st.session_state["chat_input_box_key"] = f"chat_input_box_{random.randint(1000, 9999)}"
+            st.success("✅ Chat history cleared!")
+            st.rerun()
+
+
+    # --- Display Chat History ---
+if st.session_state.get("chat_history"):
+    for entry in st.session_state["chat_history"]:
+        st.markdown(f"**🤖 IbnCare AI:** {entry['ai']}")
+        st.markdown("---")
+
+# --- 📋 Log Day-to-Day Symptoms (Mobile-Friendly & Styled) ---
+with st.expander("**📝 Day-to-Day Symptoms**", expanded=False):
+    st.markdown(
+        """<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Log temporary issues like cold, pain, etc.</h6>""",
+        unsafe_allow_html=True)
+
+    sym_col1, sym_col2, sym_col3 = st.columns([1.5, 1, 1])
+    with sym_col1:
+        st.session_state["user_name_symptom"] = st.text_input("Name:", value=st.session_state["user_name_symptom"])
+    with sym_col2:
+        st.session_state["gender_symptom"] = st.selectbox(
+            "Gender:", gender_options,
+            index=gender_options.index(st.session_state["gender_symptom"]),
+            key="gender_symptom_box"
+        )
+    with sym_col3:
+        age_symptom_key = st.session_state.get("age_symptom_key", "age_symptom_box")
+        st.session_state["age_symptom"] = st.number_input(
+            "Age:", min_value=1, max_value=120,
+            value=st.session_state["age_symptom"] or 30,
+            step=1, key=age_symptom_key
+        )
+
+    # ✅ Fix applied here using a dynamic key
+    symptom_input_key = st.session_state.get("symptom_input_key", "symptom_input_box")
+    st.session_state["symptom_input"] = st.text_input(
+        "Describe your symptom:",
+        value=st.session_state["symptom_input"],
+        key=symptom_input_key
+    )
+
+    col3, col4 = st.columns([1, 1])
+    with col3:
+        if st.button("Log Symptom"):
+            if all([
+                st.session_state["user_name_symptom"],
+                st.session_state["symptom_input"],
+                st.session_state["gender_symptom"] != "Select"
+            ]):
+                res = requests.post(f"{BACKEND_URL}/log_symptom", json={
+                    "user_name": st.session_state["user_name_symptom"],
+                    "gender": st.session_state["gender_symptom"],
+                    "age": st.session_state["age_symptom"],
+                    "symptom": st.session_state["symptom_input"]
+                })
+                if res.status_code == 200:
+                    st.success("✅ Symptom logged!")
+
+                    # Optional: auto-analysis
+                    symptom_check = requests.post(f"{BACKEND_URL}/get_symptoms", json={
+                        "user_name": st.session_state["user_name_symptom"]
+                    })
+
+                    if symptom_check.status_code == 200:
+                        data = symptom_check.json()
+                        recent_symptoms = data.get("logged_symptoms", [])
+                        if len(recent_symptoms) >= 7:
+                            st.info("🔍 7 symptoms logged. Analyzing now...")
+                            analysis_res = requests.post(f"{BACKEND_URL}/analyze_symptoms", json={
+                                "user_name": st.session_state["user_name_symptom"]
+                            })
+                            if analysis_res.status_code == 200:
+                                analysis_data = analysis_res.json()
+                                st.success("✅ AI Symptom Analysis")
+                                st.write("### Analysis Result:")
+                                st.write(analysis_data.get("analysis", "No analysis result received."))
+                            else:
+                                st.warning("⚠️ Symptom analysis failed. Please try again.")
+                else:
+                    st.error("❌ Failed to log symptom.")
+            else:
+                st.warning("Please complete all fields.")
+
+    with col4:
+        if st.button("🧹 Clear Symptom Form"):
+            for key in ["user_name_symptom", "gender_symptom", "age_symptom", "symptom_input"]:
+                st.session_state[key] = defaults[key]
+            # 👇 Force UI reset by changing keys
+            st.session_state["symptom_input_key"] = f"symptom_input_box_{random.randint(1000, 9999)}"
+            st.session_state["age_symptom_key"] = f"age_symptom_box_{random.randint(1000, 9999)}"
+            st.success("✅ Cleared symptom form!")
+            st.rerun()
+
+    st.markdown("<hr style='margin-top:25px;margin-bottom:15px;'>", unsafe_allow_html=True)
+    st.markdown(
+        "<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>📜 View Past Symptoms & Manual Analysis</h6>",
+        unsafe_allow_html=True)
+
+    col5, col6 = st.columns([1, 1])
+    with col5:
+        if st.button("📄 View My Symptoms"):
+            if st.session_state["user_name_symptom"] and st.session_state["gender_symptom"] != "Select":
+                symptom_history_response = requests.post(f"{BACKEND_URL}/get_symptoms", json={
+                    "user_name": st.session_state["user_name_symptom"],
+                    "gender": st.session_state["gender_symptom"],
+                    "age": st.session_state["age_symptom"]
+                })
+                symptoms_data = symptom_history_response.json()
+                if "logged_symptoms" in symptoms_data:
+                    st.write("### Your Past Symptoms:")
+                    for entry in symptoms_data["logged_symptoms"]:
+                        st.write(f"📅 {entry['date']} - **{entry['symptom']}**")
+                else:
+                    st.warning(symptoms_data.get("message", "No symptom records found."))
+            else:
+                st.warning("Please fill in your Name, Gender, and Age before viewing symptoms.")
+
+    with col6:
+        if st.button("📊 Analyze Manually"):
+            if st.session_state["user_name_symptom"] and st.session_state["gender_symptom"] != "Select":
+                analysis_response = requests.post(f"{BACKEND_URL}/analyze_symptoms", json={
+                    "user_name": st.session_state["user_name_symptom"],
+                    "gender": st.session_state["gender_symptom"],
+                    "age": st.session_state["age_symptom"]
+                })
+                if analysis_response.status_code == 200:
+                    analysis_result = analysis_response.json()
+                    st.success("✅ Symptom analysis completed!")
+                    if "analysis" in analysis_result:
+                        st.write("**AI Analysis:**", analysis_result["analysis"])
+                    else:
+                        st.warning("No analysis message returned.")
+                else:
+                    st.error("❌ Failed to analyze symptoms.")
+            else:
+                st.warning("Please fill in your Name, Gender, and Age before analyzing.")
+
+# --- 📋 Chronic Medical Conditions (Mobile-Friendly & Styled) ---
+with st.expander("**📋 Chronic Medical Conditions**", expanded=False):
+    st.markdown(
+        """<h6 style='color: #004d40; font-size: 15px; font-weight: 500;'>Add long-term conditions (e.g., diabetes, surgery)</h6>""",
+        unsafe_allow_html=True)
+
+    # Name, Gender, Age row
+    med_col1, med_col2, med_col3 = st.columns([1.5, 1, 1])
+    with med_col1:
+        st.session_state["medical_user_name"] = st.text_input(
+            "Name:", value=st.session_state["medical_user_name"], key="medical_user_name_input"
+        )
+    with med_col2:
+        st.session_state["gender_medical"] = st.selectbox(
+            "Gender:", gender_options,
+            index=gender_options.index(st.session_state["gender_medical"]),
+            key="gender_medical_box"
+        )
+    with med_col3:
+        age_medical_key = st.session_state.get("age_medical_key", "age_medical_box")
+        st.session_state["age_medical"] = st.number_input(
+            "Age:", min_value=1, max_value=120,
+            value=st.session_state["age_medical"] or 30,
+            step=1, key=age_medical_key
+        )
+
+    # Condition Type and Description
+    condition_type_key = st.session_state.get("condition_type_key", "condition_type_input")
+    st.session_state["condition_type"] = st.text_input(
+        "Condition Type:", value=st.session_state["condition_type"], key=condition_type_key
+    )
+
+    condition_desc_key = st.session_state.get("condition_desc_key", "condition_desc_input")
+    st.session_state["condition_description"] = st.text_area(
+        "Condition Description:", value=st.session_state["condition_description"], key=condition_desc_key
+    )
+
+    # Submit + Clear
+    col7, col8 = st.columns([1, 1])
+    with col7:
+        if st.button("Submit Medical History"):
+            if st.session_state["medical_user_name"] and st.session_state["condition_type"] and st.session_state[
+                "gender_medical"] != "Select":
+                res = requests.post(f"{BACKEND_URL}/log_medical_history", json={
+                    "medical_user_name": st.session_state["medical_user_name"],
+                    "gender": st.session_state["gender_medical"],
+                    "age": st.session_state["age_medical"],
+                    "condition_type": st.session_state["condition_type"],
+                    "condition_description": st.session_state["condition_description"]
+                })
+                if res.status_code == 200:
+                    st.success("✅ Medical history submitted!")
+                else:
+                    st.error("❌ Failed to submit medical history.")
+            else:
+                st.warning("Please complete all fields.")
+
+    with col8:
+        if st.button("🧹 Clear Medical Form"):
+            for key in ["medical_user_name", "gender_medical", "age_medical", "condition_type",
+                        "condition_description"]:
+                st.session_state[key] = defaults[key]
+            st.session_state["condition_type_key"] = f"condition_type_input_{random.randint(1000, 9999)}"
+            st.session_state["condition_desc_key"] = f"condition_desc_input_{random.randint(1000, 9999)}"
+            st.session_state["age_medical_key"] = f"age_medical_box_{random.randint(1000, 9999)}"
+            st.success("✅ Cleared medical form!")
+            st.rerun()
+
+    # View and Clear
+    st.markdown("<hr style='margin-top:25px;margin-bottom:15px;'>", unsafe_allow_html=True)
+    st.markdown("<h6 style='color:#004d40; font-size: 15px; font-weight: 500;'>📖 View Medical History</h6>",
+                unsafe_allow_html=True)
+
+    col9, col10 = st.columns([1, 1])
+    with col9:
+        if st.button("📄 View Medical History"):
+            if st.session_state["medical_user_name"] and st.session_state["gender_medical"] != "Select" and \
+                    st.session_state["age_medical"]:
+                res = requests.post(f"{BACKEND_URL}/get_medical_history", json={
+                    "medical_user_name": st.session_state["medical_user_name"],
+                    "gender": st.session_state["gender_medical"],
+                    "age": st.session_state["age_medical"]
+                })
+                data = res.json()
+                if "medical_history" in data:
+                    st.session_state["medical_history_data"] = data["medical_history"]
+                    st.success("✅ Medical history retrieved!")
+                else:
+                    st.session_state["medical_history_data"] = []
+                    st.warning(data.get("message", "No medical history found."))
+            else:
+                st.warning("Please fill in your Name, Gender, and Age to view history.")
+
+    with col10:
+        if st.button("🗑 Clear Medical Retrieval"):
+            st.session_state["medical_user_name"] = ""
+            st.session_state["medical_history_data"] = []
+            st.success("✅ Cleared medical history input.")
+            st.rerun()
+
+    if st.session_state.get("medical_history_data"):
+        st.write("### Your Medical History:")
+        for entry in st.session_state["medical_history_data"]:
+            st.write(f"🩺 **Condition Type:** {entry['condition_type']}")
+            st.write(f"📝 **Description:** {entry['condition_description']}")
+            st.write(f"📅 **Date:** {entry['date']}")
+            st.markdown("---")
+
+# --- 📤 Export PDF (Aligned, Mobile-friendly)
+pdf_row = st.columns([0.08, 0.92])
+with pdf_row[0]:
+    export_pdf_clicked = st.button("📄", key="generate_pdf", help="Generate PDF summary")
+with pdf_row[1]:
+    st.markdown(
+        """
+        <span style='font-weight: bold; font-size: 15px; color: #1b5e20;'>Export PDF</span>
+        <br>
+        <span style='font-size: 12px; color: #555;'>Fill Name, Gender & Age in chat section. If your data exists, it will be exported.</span>
+        """, unsafe_allow_html=True
+    )
+
+# --- Export Logic
+if export_pdf_clicked:
+    user_name = st.session_state.get("user_name_chat", "").strip()
+    gender = st.session_state.get("gender_chat", "").strip()
+    age = st.session_state.get("age_chat", 0)
+
+    if not user_name or gender == "Select" or not age:
+        st.warning("⚠️ Please fill in your Name, Gender & Age before exporting.")
+    else:
+        try:
+            symptom_res = requests.post(f"{BACKEND_URL}/get_symptoms", json={
+                "user_name": user_name, "gender": gender, "age": age
+            })
+            medical_res = requests.post(f"{BACKEND_URL}/get_medical_history", json={
+                "medical_user_name": user_name, "gender": gender, "age": age
             })
 
-        else:
-            return jsonify({"message": "Symptom logged successfully! (Not enough data for analysis yet.)"})
+            symptoms_data = symptom_res.json() if symptom_res.status_code == 200 else {}
+            medical_data = medical_res.json() if medical_res.status_code == 200 else {}
+            symptoms = symptoms_data.get("logged_symptoms", [])
+            medical_history = medical_data.get("medical_history", [])
+            chat_history = st.session_state.get("chat_history", [])
 
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"Database error: {err}"}), 500
-    except Exception as e:
-        return jsonify({"error": f"Gemini error: {str(e)}"}), 500
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
+            if not symptoms and not medical_history:
+                st.warning("❌ No data found in Symptoms or Medical History.")
+            else:
+                payload = {
+                    "user_name": user_name,
+                    "gender": gender,
+                    "age": age,
+                    "chat_history": [{"question": h["user"], "response": h["ai"]} for h in chat_history],
+                    "symptoms": symptoms,
+                    "medical_history": medical_history
+                }
+                res = requests.post(f"{BACKEND_URL}/export_pdf", json=payload)
+                if res.status_code == 200:
+                    file_path = f"{user_name}_health_summary.pdf"
+                    with open(file_path, "wb") as f:
+                        f.write(res.content)
+                    st.success("✅ PDF exported successfully!")
+                    with open(file_path, "rb") as pdf_file:
+                        st.download_button("📥 Download PDF", data=pdf_file.read(), file_name=file_path,
+                                           mime="application/pdf")
+                    os.remove(file_path)
+                else:
+                    st.error("❌ PDF export failed.")
+        except Exception as e:
+            st.error(f"❌ Error: {str(e)}")
 
-@app.route("/get_symptoms", methods=["POST"])
-def get_symptoms():
-    data = request.get_json()
+# --- 📑 Upload Scan (Aligned, Compact)
+scan_row = st.columns([0.08, 0.92])
+with scan_row[0]:
+    scan_clicked = st.button("📤", key="scan_upload_icon", help="Upload scan report")
+    if scan_clicked:
+        st.session_state["show_scan_uploader"] = True
 
-    if not data or "user_name" not in data or "gender" not in data or "age" not in data:
-        return jsonify({"error": "Please provide user_name, gender, and age."}), 400
+with scan_row[1]:
+    st.markdown(
+        """
+        <span style='font-weight: bold; font-size: 15px; color: #1b5e20;'>Upload Medical Scan Report</span>
+        <br>
+        <span style='font-size: 12px; color: #555;'>PNG, JPG, JPEG supported. 📄 PDF support coming soon. Limit: 200MB.</span>
+        """, unsafe_allow_html=True
+    )
 
-    user_name = data["user_name"].strip().lower()
-    gender = data["gender"].strip().lower()
-    age = int(data["age"])
-
-    conn = connect_db()
-    if conn is None:
-        return jsonify({"error": "Database connection failed."}), 500
-
-    try:
-        cursor = conn.cursor()
-
-        # Debug: View all distinct users (optional)
-        cursor.execute("SELECT DISTINCT LOWER(user_name), gender, age FROM symptoms;")
-        print("DEBUG: All users in DB -", cursor.fetchall())
-
-        # ✅ Match by name + gender + age
-        cursor.execute("""
-            SELECT symptom, timestamp FROM symptoms 
-            WHERE LOWER(TRIM(user_name)) = %s AND LOWER(TRIM(gender)) = %s AND age = %s
-            ORDER BY timestamp DESC
-        """, (user_name, gender, age))
-        symptoms = cursor.fetchall()
-
-
-        if not symptoms:
-            return jsonify({"message": f"No symptoms found for user: {user_name} ({gender}, {age})."})
-
-        symptom_list = [{"symptom": s[0], "date": s[1].strftime('%Y-%m-%d')} for s in symptoms]
-        return jsonify({"user": user_name, "logged_symptoms": symptom_list})
-
-    except mysql.connector.Error as err:
-        print(f"❌ Database Error: {err}")
-        return jsonify({"error": f"Database error: {err}"}), 500
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-
-
-# --- New Route to Clear User Symptoms ---
-@app.route("/clear_user_symptoms", methods=["POST"])
-def clear_user_symptoms():
-    data = request.get_json()
-
-    if not data or "user_name" not in data:
-        return jsonify({"error": "Invalid request. Please provide a valid user_name."}), 400
-
-    user_name = data["user_name"]
-
-    conn = connect_db()
-    if conn is None:
-        return jsonify({"error": "Database connection failed."}), 500
-
-    try:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM symptoms WHERE user_name = %s", (user_name,))
-        conn.commit()
-        return jsonify({"message": f"All symptoms for user {user_name} have been cleared."})
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"Database error: {err}"}), 500
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
-
-@app.route("/log_medical_history", methods=["POST"])
-def log_medical_history():
-    data = request.get_json()
-
-    if not data or "medical_user_name" not in data or "condition_type" not in data or "gender" not in data or "age" not in data:
-        return jsonify({"error": "Invalid input. 'medical_user_name', 'condition_type', 'gender', and 'age' required."}), 400
-
-    user_name = data["medical_user_name"]
-    condition_type = data["condition_type"]
-    description = data.get("condition_description", "")
-    gender = data["gender"]
-    age = data["age"]
-
-    conn = connect_db()
-    if conn is None:
-        return jsonify({"error": "Database connection failed."}), 500
-
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO medical_history (medical_user_name, condition_type, condition_description, gender, age) VALUES (%s, %s, %s, %s, %s)",
-            (user_name, condition_type, description, gender, age)
-        )
-        conn.commit()
-        return jsonify({"message": "Medical history recorded successfully!"})
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"Database error: {err}"}), 500
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-@app.route("/get_medical_history", methods=["POST"])
-def get_medical_history():
-    data = request.get_json()
-
-    if not all(k in data for k in ("medical_user_name", "gender", "age")):
-        return jsonify({"error": "Invalid request. 'medical_user_name', 'gender', and 'age' are required."}), 400
-
-    medical_user_name = data["medical_user_name"].strip().lower()
-    gender = data["gender"].strip().lower()
-    age = data["age"]
-
-    conn = connect_db()
-    if conn is None:
-        return jsonify({"error": "Database connection failed."}), 500
-
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT condition_type, condition_description, created_at 
-            FROM medical_history 
-            WHERE LOWER(TRIM(medical_user_name)) = %s AND LOWER(gender) = %s AND age = %s
-            ORDER BY created_at DESC
-        """, (medical_user_name, gender, age))
-        records = cursor.fetchall()
-
-        if not records:
-            return jsonify({"message": "No medical history found for this user."})
-
-        result = [{"condition_type": r[0], "condition_description": r[1], "date": r[2].strftime('%Y-%m-%d')} for r in records]
-        return jsonify({"user": medical_user_name, "medical_history": result})
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"Database error: {err}"}), 500
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-@app.route("/analyze_symptoms", methods=["POST"])
-def analyze_symptoms():
-    data = request.get_json()
-
-    if not all(k in data for k in ("user_name", "gender", "age")):
-        return jsonify({"error": "Missing user_name, gender, or age"}), 400
-
-    user_name = data["user_name"].strip().lower()
-    gender = data["gender"].strip().lower()
-    age = data["age"]
-
-    conn = connect_db()
-    if conn is None:
-        return jsonify({"error": "Database connection failed"}), 500
-
-    try:
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute("""
-            SELECT symptom 
-            FROM symptoms 
-            WHERE LOWER(TRIM(user_name)) = %s AND LOWER(gender) = %s AND age = %s 
-              AND timestamp >= CURDATE() - INTERVAL 7 DAY
-            ORDER BY timestamp DESC
-        """, (user_name, gender, age))
-        rows = cursor.fetchall()
-
-        if not rows:
-            return jsonify({"message": "No symptoms found for this user."})
-
-        symptoms = [row["symptom"] for row in rows]
-
-        symptom_list = "\n".join([f"- {s}" for s in symptoms])
-        prompt = (
-            f"You are a medical assistant. A {gender.lower()} aged {age} has reported the following symptoms over the last 7 days:\n"
-            f"{symptom_list}\n\n"
-            "1. Analyze the seriousness based on symptom combination and age/gender.\n"
-            "2. If it's mild/common, provide a reassuring, friendly message.\n"
-            "3. If it’s serious or persistent, suggest consulting a doctor politely.\n"
-            "Keep it short and empathetic (max 4–6 lines)."
-        )
-
-        print("📝 Final Prompt Sent to Gemini:\n", prompt)
-
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content([prompt, "Please provide your analysis."])
-
-        if response.candidates and response.candidates[0].content.parts:
-            message = response.candidates[0].content.parts[0].text.strip()
-        else:
-            message = "Sorry, I couldn't analyze your symptoms at the moment. Please try again later."
-
-        return jsonify({
-            "user": user_name,
-            "symptoms": symptoms,
-            "gender": gender,
-            "age": age,
-            "analysis": message
-        })
-
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"Database error: {err}"}), 500
-    except Exception as e:
-        return jsonify({"error": f"Gemini error: {str(e)}"}), 500
-    finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
-
-@app.route("/export_pdf", methods=["POST"])
-def export_pdf():
-    data = request.get_json()
-
-    required_fields = ["user_name", "gender", "age", "chat_history", "symptoms", "medical_history"]
-    if not all(field in data for field in required_fields):
-        return jsonify({"error": "Missing required fields in request."}), 400
-
-    user_name = data["user_name"]
-    gender = data["gender"]
-    age = data["age"]
-    chat_history = data["chat_history"]
-    symptoms = data["symptoms"]
-    medical_history = data["medical_history"]
-
-    def safe_text(text):
-        return str(text).encode("latin-1", errors="ignore").decode("latin-1")
-
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-
-    pdf.cell(200, 10, txt=safe_text("AI Health Summary"), ln=True, align='C')
-    pdf.ln(10)
-    pdf.cell(200, 10, txt=safe_text(f"Name: {user_name} | Gender: {gender} | Age: {age}"), ln=True)
-
-    # Chat History
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Chat History:", ln=True)
-    pdf.set_font("Arial", size=12)
-    for item in chat_history:
-        pdf.multi_cell(0, 10, safe_text(f"Q: {item['question']}\nA: {item['response']}"))
-        pdf.ln(2)
-
-    # Symptoms
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Logged Symptoms:", ln=True)
-    pdf.set_font("Arial", size=12)
-    for s in symptoms:
-        pdf.cell(200, 10, txt=safe_text(f"- {s['symptom']} ({s['date']})"), ln=True)
-
-    # Medical History
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Medical History:", ln=True)
-    pdf.set_font("Arial", size=12)
-    for m in medical_history:
-        pdf.multi_cell(0, 10, safe_text(f"- {m['condition_type']}: {m['condition_description']} ({m['date']})"))
-        pdf.ln(1)
-
-    # Save to a temp file and return
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-        pdf.output(tmp_file.name)
-        tmp_file.flush()
-        return send_file(tmp_file.name, as_attachment=True, download_name=f"{user_name}_health_summary.pdf")
-
-
-from utils import preprocess  # make sure utils.py is in same folder
-
-@app.route("/upload_scan", methods=["POST"])
-def upload_scan():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-
-    file = request.files['file']
-    filename = file.filename.lower()
-    extracted_text = ""
-
-    try:
-        if filename.endswith(('.png', '.jpg', '.jpeg')):
-            image = Image.open(file.stream)
-            processed = preprocess(image)
-            extracted_text = pytesseract.image_to_string(Image.fromarray(processed))
-
-        elif filename.endswith('.pdf'):
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_pdf:
-                tmp_pdf.write(file.read())
-                tmp_pdf_path = tmp_pdf.name
-
+# --- Uploader logic
+if st.session_state.get("show_scan_uploader", False):
+    uploaded_file = st.file_uploader("Choose scan image or PDF", type=["png", "jpg", "jpeg", "pdf"],
+                                     key="scan_file_uploader")
+    if uploaded_file:
+        with st.spinner("🧠 Analyzing scan report..."):
             try:
-                images = convert_from_path(tmp_pdf_path, poppler_path=POPPLER_PATH)
-
-                if not images or len(images) == 0:
-                    return jsonify({"error": "❌ PDF loaded, but no pages rendered. Please try another file."}), 400
-
-                for img in images:
-                    processed = preprocess(img)
-                    extracted_text += pytesseract.image_to_string(Image.fromarray(processed))
-
-            except Exception as pdf_err:
-                return jsonify({"error": f"❌ PDF processing failed: {str(pdf_err)}"}), 500
-            finally:
-                os.remove(tmp_pdf_path)
-
-        else:
-            return jsonify({"error": "Unsupported file format."}), 400
-
-        if not extracted_text.strip():
-            return jsonify({"error": "❌ No text could be read. Try a clearer PDF or image scan."}), 400
-
-        # AI summary
-        prompt = (
-            "You are a calm and caring AI assistant. A user has uploaded this medical scan/report text:\n\n"
-            f"{extracted_text}\n\n"
-            "Please explain it in simple, kind language. Gently summarize the key findings, and if it sounds alarming, add a calm disclaimer like: "
-            "'Please don’t panic. This is only a machine reading and not a diagnosis. Always consult a doctor.'"
-        )
-
-        model = genai.GenerativeModel("gemini-2.0-flash")
-        response = model.generate_content(prompt)
-
-        return jsonify({
-            "extracted_text": extracted_text,
-            "summary": response.text
-        })
-
-    except Exception as e:
-        return jsonify({"error": f"Scan processing error: {str(e)}"}), 500
-
-
-
-@app.route("/", methods=["GET"])
-def index():
-    return "✅ IbnCare Flask backend is running!", 200
-
-
-
-
-# --- Run Flask App ---
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
-    
-
-
+                res = requests.post(f"{BACKEND_URL}/upload_scan",
+                                    files={"file": (uploaded_file.name, uploaded_file, uploaded_file.type)})
+                if res.status_code == 200:
+                    data = res.json()
+                    st.success("✅ Scan uploaded and analyzed!")
+                    with st.expander("📜 Extracted Text (OCR)"):
+                        st.text_area("Extracted Text:", value=data.get("extracted_text", ""), height=150)
+                    with st.expander("🧠 AI Explanation"):
+                        st.markdown(data.get("summary", "No summary available."))
+                    st.session_state["show_scan_uploader"] = False
+                else:
+                    st.error("❌ Failed to analyze scan.")
+            except Exception as e:
+                st.error(f"❌ Error: {str(e)}")
