@@ -9,7 +9,7 @@ import string
 import os
 
 # --- 🌐 Backend URL ---
-BACKEND_URL = "http://127.0.0.1:5000"
+BACKEND_URL = "http://127.0.0.1:10000"
 
 
 # --- 🧠 Initialize Session State ---
