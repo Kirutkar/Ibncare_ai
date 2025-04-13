@@ -1,17 +1,19 @@
 streamlit
 requests
 speechrecognition
-pillow
+pyaudio ; platform_system == "Windows"
+fpdf
 flask
 flask_cors
 python-dotenv
-fpdf
-mysql-connector-python
-opencv-python
-numpy
+psycopg2-binary
 pytesseract
-google-generativeai
+pillow
 pdf2image
+google-generativeai
 langdetect
 googletrans==4.0.0-rc1
+opencv-python
+fitz
 PyMuPDF
+numpy
