@@ -1,7 +1,5 @@
 import os
 import google.generativeai as genai
-import mysql.connector
-import mysql.connector
 from dotenv import load_dotenv
 from fpdf import FPDF
 from flask import send_file
@@ -30,13 +28,7 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
-# --- MySQL Database Configuration ---
-db_config = {
-    "host": os.getenv("MYSQL_HOST"),
-    "user": os.getenv("MYSQL_USER"),
-    "password": os.getenv("MYSQL_PASSWORD"),
-    "database": os.getenv("MYSQL_DATABASE")
-}
+
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS
@@ -44,14 +36,27 @@ CORS(app)  # Enable CORS
 # --- Global cache dictionary to store previous responses ---
 cache = {}
 
-# --- Function to establish database connection ---
+import psycopg2
+import psycopg2.extras  # ✅ ADD THIS LINE
+
+
+
+
 def connect_db():
     try:
-        conn = mysql.connector.connect(**db_config)
+        conn = psycopg2.connect(
+            host=os.getenv("PG_HOST"),
+            user=os.getenv("PG_USER"),
+            password=os.getenv("PG_PASSWORD"),
+            database=os.getenv("PG_DATABASE"),
+            port=os.getenv("PG_PORT", 5432),
+            sslmode='require'  # Neon requires SSL
+        )
         return conn
-    except mysql.connector.Error as err:
-        print(f"❌ Database Error: {err}")
+    except Exception as e:
+        print(f"❌ PostgreSQL Connection Error: {e}")
         return None
+
 from langdetect import detect
 from googletrans import Translator
 
@@ -65,7 +70,7 @@ def chat():
     user_message = data["message"]
     user_name = data["user_name"].strip().lower()
     gender = data["gender"].strip().lower()
-    age = int(data["age"])
+    age = str(data["age"])
 
     # --- Language Detection ---
     translator = Translator()
@@ -89,7 +94,7 @@ def chat():
         cursor = conn.cursor()
         cursor.execute("""SELECT symptom FROM symptoms 
                           WHERE LOWER(TRIM(user_name)) = %s AND LOWER(TRIM(gender)) = %s AND age = %s 
-                          AND timestamp >= CURDATE() - INTERVAL 10 DAY ORDER BY timestamp DESC""",
+                          AND timestamp >=  CURRENT_DATE - INTERVAL '10 days' ORDER BY timestamp DESC""",
                        (user_name, gender, age))
         symptom_rows = cursor.fetchall()
         recent_symptoms = [row[0] for row in symptom_rows if row[0].strip().lower() != user_msg_lower]
@@ -100,7 +105,7 @@ def chat():
                        (user_name, gender, age))
         med_rows = cursor.fetchall()
         medical_conditions = [row[0] for row in med_rows]
-    except mysql.connector.Error as err:
+    except psycopg2.Error as err:
         return jsonify({"error": f"Database error: {err}"}), 500
     finally:
         if cursor: cursor.close()
@@ -172,10 +177,7 @@ def chat():
         return jsonify({"response": new_user_disclaimer + final_response})
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()  # ⬅️ Add this line to see full error in logs
-        print("❌ Chat Route Error:", str(e))
-        return jsonify({"response": f"❌ AI Error: {str(e)}"}), 500
+        return jsonify({"response": f"❌ AI Error: {str(e)}"})
 
 
 
@@ -189,7 +191,7 @@ def log_symptom():
     user_name = data["user_name"]
     symptom = data["symptom"]
     gender = data["gender"]
-    age = data["age"]
+    age = str(data["age"])
 
     conn = connect_db()
     if conn is None:
@@ -201,13 +203,15 @@ def log_symptom():
                        (user_name, symptom, gender, age))
         conn.commit()
 
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+
         # --- Analyze symptoms if we have 7 days of logs ---
-        cursor = conn.cursor(dictionary=True)
+        
         cursor.execute("""
             SELECT symptom, gender, age 
             FROM symptoms 
             WHERE LOWER(TRIM(user_name)) = %s 
-              AND timestamp >= CURDATE() - INTERVAL 7 DAY
+              AND timestamp >= CURRENT_DATE - INTERVAL '7 days'
             ORDER BY timestamp DESC
         """, (user_name.lower(),))
         rows = cursor.fetchall()
@@ -242,7 +246,7 @@ def log_symptom():
         else:
             return jsonify({"message": "Symptom logged successfully! (Not enough data for analysis yet.)"})
 
-    except mysql.connector.Error as err:
+    except psycopg2.Error as err:
         return jsonify({"error": f"Database error: {err}"}), 500
     except Exception as e:
         return jsonify({"error": f"Gemini error: {str(e)}"}), 500
@@ -259,20 +263,20 @@ def get_symptoms():
 
     user_name = data["user_name"].strip().lower()
     gender = data["gender"].strip().lower()
-    age = int(data["age"])
+    age = str(data["age"])
 
     conn = connect_db()
     if conn is None:
         return jsonify({"error": "Database connection failed."}), 500
 
     try:
-        cursor = conn.cursor()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
 
-        # Debug: View all distinct users (optional)
+        # 🔍 Optional Debugging (Can remove in production)
         cursor.execute("SELECT DISTINCT LOWER(user_name), gender, age FROM symptoms;")
         print("DEBUG: All users in DB -", cursor.fetchall())
 
-        # ✅ Match by name + gender + age
+        # ✅ Fetch symptoms using name + gender + age
         cursor.execute("""
             SELECT symptom, timestamp FROM symptoms 
             WHERE LOWER(TRIM(user_name)) = %s AND LOWER(TRIM(gender)) = %s AND age = %s
@@ -280,50 +284,19 @@ def get_symptoms():
         """, (user_name, gender, age))
         symptoms = cursor.fetchall()
 
-
         if not symptoms:
             return jsonify({"message": f"No symptoms found for user: {user_name} ({gender}, {age})."})
 
-        symptom_list = [{"symptom": s[0], "date": s[1].strftime('%Y-%m-%d')} for s in symptoms]
+        symptom_list = [{"symptom": row["symptom"], "date": row["timestamp"].strftime('%Y-%m-%d')} for row in symptoms]
         return jsonify({"user": user_name, "logged_symptoms": symptom_list})
 
-    except mysql.connector.Error as err:
+    except psycopg2.Error as err:
         print(f"❌ Database Error: {err}")
         return jsonify({"error": f"Database error: {err}"}), 500
     finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
+        if cursor: cursor.close()
+        if conn: conn.close()
 
-
-
-# --- New Route to Clear User Symptoms ---
-@app.route("/clear_user_symptoms", methods=["POST"])
-def clear_user_symptoms():
-    data = request.get_json()
-
-    if not data or "user_name" not in data:
-        return jsonify({"error": "Invalid request. Please provide a valid user_name."}), 400
-
-    user_name = data["user_name"]
-
-    conn = connect_db()
-    if conn is None:
-        return jsonify({"error": "Database connection failed."}), 500
-
-    try:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM symptoms WHERE user_name = %s", (user_name,))
-        conn.commit()
-        return jsonify({"message": f"All symptoms for user {user_name} have been cleared."})
-    except mysql.connector.Error as err:
-        return jsonify({"error": f"Database error: {err}"}), 500
-    finally:
-        if cursor:
-            cursor.close()
-        if conn:
-            conn.close()
 
 @app.route("/log_medical_history", methods=["POST"])
 def log_medical_history():
@@ -336,7 +309,7 @@ def log_medical_history():
     condition_type = data["condition_type"]
     description = data.get("condition_description", "")
     gender = data["gender"]
-    age = data["age"]
+    age =str(data["age"])
 
     conn = connect_db()
     if conn is None:
@@ -345,16 +318,25 @@ def log_medical_history():
     try:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO medical_history (medical_user_name, condition_type, condition_description, gender, age) VALUES (%s, %s, %s, %s, %s)",
+            """
+            INSERT INTO medical_history (medical_user_name, condition_type, condition_description, gender, age)
+            VALUES (%s, %s, %s, %s, %s)
+            """,
             (user_name, condition_type, description, gender, age)
         )
         conn.commit()
         return jsonify({"message": "Medical history recorded successfully!"})
-    except mysql.connector.Error as err:
+
+    except psycopg2.Error as err:
+        print(f"❌ PostgreSQL Error: {err}")
         return jsonify({"error": f"Database error: {err}"}), 500
     finally:
-        if cursor: cursor.close()
-        if conn: conn.close()
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+import psycopg2  # ensure this is imported if not already
 
 @app.route("/get_medical_history", methods=["POST"])
 def get_medical_history():
@@ -365,7 +347,7 @@ def get_medical_history():
 
     medical_user_name = data["medical_user_name"].strip().lower()
     gender = data["gender"].strip().lower()
-    age = data["age"]
+    age = str(data["age"])
 
     conn = connect_db()
     if conn is None:
@@ -376,7 +358,7 @@ def get_medical_history():
         cursor.execute("""
             SELECT condition_type, condition_description, created_at 
             FROM medical_history 
-            WHERE LOWER(TRIM(medical_user_name)) = %s AND LOWER(gender) = %s AND age = %s
+            WHERE LOWER(TRIM(medical_user_name)) = %s AND LOWER(TRIM(gender)) = %s AND age = %s
             ORDER BY created_at DESC
         """, (medical_user_name, gender, age))
         records = cursor.fetchall()
@@ -386,11 +368,14 @@ def get_medical_history():
 
         result = [{"condition_type": r[0], "condition_description": r[1], "date": r[2].strftime('%Y-%m-%d')} for r in records]
         return jsonify({"user": medical_user_name, "medical_history": result})
-    except mysql.connector.Error as err:
+
+    except psycopg2.Error as err:
+        print(f"❌ PostgreSQL Error: {err}")
         return jsonify({"error": f"Database error: {err}"}), 500
     finally:
         if cursor: cursor.close()
         if conn: conn.close()
+
 
 @app.route("/analyze_symptoms", methods=["POST"])
 def analyze_symptoms():
@@ -401,19 +386,19 @@ def analyze_symptoms():
 
     user_name = data["user_name"].strip().lower()
     gender = data["gender"].strip().lower()
-    age = data["age"]
+    age =str(data["age"])
 
     conn = connect_db()
     if conn is None:
         return jsonify({"error": "Database connection failed"}), 500
 
     try:
-        cursor = conn.cursor(dictionary=True)
+        cursor = conn.cursor()
         cursor.execute("""
             SELECT symptom 
             FROM symptoms 
-            WHERE LOWER(TRIM(user_name)) = %s AND LOWER(gender) = %s AND age = %s 
-              AND timestamp >= CURDATE() - INTERVAL 7 DAY
+            WHERE LOWER(TRIM(user_name)) = %s AND LOWER(TRIM(gender)) = %s AND age = %s 
+              AND timestamp >= CURRENT_DATE - INTERVAL '7 days'
             ORDER BY timestamp DESC
         """, (user_name, gender, age))
         rows = cursor.fetchall()
@@ -421,7 +406,7 @@ def analyze_symptoms():
         if not rows:
             return jsonify({"message": "No symptoms found for this user."})
 
-        symptoms = [row["symptom"] for row in rows]
+        symptoms = [row[0] for row in rows]
 
         symptom_list = "\n".join([f"- {s}" for s in symptoms])
         prompt = (
@@ -432,8 +417,6 @@ def analyze_symptoms():
             "3. If it’s serious or persistent, suggest consulting a doctor politely.\n"
             "Keep it short and empathetic (max 4–6 lines)."
         )
-
-        print("📝 Final Prompt Sent to Gemini:\n", prompt)
 
         model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content([prompt, "Please provide your analysis."])
@@ -451,7 +434,8 @@ def analyze_symptoms():
             "analysis": message
         })
 
-    except mysql.connector.Error as err:
+    except psycopg2.Error as err:
+        print(f"❌ PostgreSQL Error: {err}")
         return jsonify({"error": f"Database error: {err}"}), 500
     except Exception as e:
         return jsonify({"error": f"Gemini error: {str(e)}"}), 500
@@ -469,7 +453,7 @@ def export_pdf():
 
     user_name = data["user_name"]
     gender = data["gender"]
-    age = data["age"]
+    age = str(data["age"])
     chat_history = data["chat_history"]
     symptoms = data["symptoms"]
     medical_history = data["medical_history"]
@@ -580,14 +564,6 @@ def upload_scan():
 
 
 
-@app.route("/", methods=["GET"])
-def index():
-    return "✅ IbnCare Flask backend is running!", 200
-
-
-
-
 # --- Run Flask App ---
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port,debug=True)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
